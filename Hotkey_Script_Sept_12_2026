@@ -215,8 +215,7 @@ BuildNote(raw) {
         }
 
         ; ---- Follow-up (designated [FU]/FU:/F/U:, or a Follow-up: label) -----
-        if RegExMatch(match, "i)^\s*(?:\d+[.)]\s*)?(?:\[\s*(?:F/?U|FOLLOW[\s-]?UP)\s*\]\s*:?|Follow[\s-]?up\s*:?|F/?U\s*:)\s*(.*)$", &m)
-            || RegExMatch(match, "i)\bFollow[\s-]?up\s*:\s*(.*)$", &m) {
+        if RegExMatch(match, "i)^\s*(?:\d+[.)]\s*)?(?:\[\s*(?:F/?U|FOLLOW[\s-]?UP)\s*\]\s*:?|Follow[\s-]?up\s*:?|F/?U\s*:)\s*(.*)$", &m) {
             if (inAssessment) {
                 s0 := out.Length + 1
                 FlushAssessment(out, apHeaderTrailing, apItems, problems)
@@ -837,7 +836,18 @@ TitleFromHead(head) {
 }
 
 IsTitleLike(s) {
-    return (s != "" && StrLen(s) <= 60 && !InStr(s, ".") && !InStr(s, "?") && !InStr(s, "!"))
+    s := Trim(s)
+    if (s = "" || StrLen(s) > 60 || InStr(s, ".") || InStr(s, "?") || InStr(s, "!"))
+        return false
+
+    ; Do not treat generic section labels as urologic diagnoses.
+    switch StrUpper(s) {
+        case "ASSESSMENT", "ASSESSMENT & RECOMMENDATIONS", "ASSESSMENT AND RECOMMENDATIONS",
+             "PLAN", "RECOMMENDATIONS", "FOLLOW-UP", "FOLLOW UP", "F/U", "FU",
+             "HPI", "HISTORY OF PRESENT ILLNESS", "RESULTS", "REVIEWED DATA":
+            return false
+    }
+    return true
 }
 
 ; True if the (md-stripped) line is an HPI / A&P / Follow-up section header.
@@ -996,6 +1006,7 @@ RtfEscape(s) {
         if (ch = "`t")
             o .= "\tab "
         else if (code > 127) {
+            ; RTF \uN uses a signed 16-bit value.
             if (code > 32767)
                 code -= 65536
             o .= "\u" code "?"
@@ -1017,7 +1028,7 @@ TruncateBelowSignatureText(text) {
     lines := StrSplit(norm, "`n")
     sigIdx := 0
     loop lines.Length {
-        if (!sigIdx && RegExMatch(lines[A_Index], "i)Michael\s+A\.?\s+Gorin"))
+        if (!sigIdx && RegExMatch(lines[A_Index], SignatureAnchor))
             sigIdx := A_Index
     }
     if (!sigIdx)
@@ -1044,7 +1055,7 @@ TruncateBelowSignatureText(text) {
 TruncateBelowSignatureRtf(rtf) {
     if (rtf = "")
         return ""
-    sigPos := RegExMatch(rtf, "i)Michael\s+A\.?\s+Gorin")
+    sigPos := RegExMatch(rtf, SignatureAnchor)
     if (!sigPos)
         return rtf
     leftPos := RegExMatch(rtf, "i)History of Present Illness|Assessment\s*(?:&|and)\s*Plan|Follow[\s-]?up", , sigPos + 20)
@@ -1104,11 +1115,20 @@ SetClipboardRichText(rtf, plain) {
 
     ok := true
     hUni := AllocClipboardMem(plain, "UTF-16")
-    if (!hUni || !DllCall("SetClipboardData", "UInt", CF_UNICODETEXT, "Ptr", hUni))
+    if (!hUni) {
         ok := false
+    } else if (!DllCall("SetClipboardData", "UInt", CF_UNICODETEXT, "Ptr", hUni)) {
+        DllCall("GlobalFree", "Ptr", hUni)
+        ok := false
+    }
+
     hRtf := AllocClipboardMem(rtf, "CP1252")
-    if (!hRtf || !DllCall("SetClipboardData", "UInt", CF_RTF, "Ptr", hRtf))
+    if (!hRtf) {
         ok := false
+    } else if (!DllCall("SetClipboardData", "UInt", CF_RTF, "Ptr", hRtf)) {
+        DllCall("GlobalFree", "Ptr", hRtf)
+        ok := false
+    }
 
     DllCall("CloseClipboard")
     return ok
